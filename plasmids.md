@@ -56,9 +56,9 @@ tsv-filter refseq.sizes --le 2:2000 | wc -l
 faops some ../RefSeq/plasmid.fa <(tsv-filter refseq.sizes --gt 2:2000) refseq.fa
 
 
-#使用Mash工具为FASTA序列创建（MinHash草图）  
+#使用Mash工具为FASTA序列创建MinHash草图，每条序列都含数个短片段  
 #-k 21：设置 k-mer 大小为21。即把序列分割成长度为21个碱基的片段进行分析；  
-#-s 1000：设置 草图大小为1000。即最终为每个基因组保留1000个最小的哈希值作为代表。值越大，比较精度越高，但计算量也越大；  
+#-s 1000：设置 草图大小为1000。即最终为每个基因组保留1000个最小的哈希值（数据转换成的一个近乎唯一的大整数）作为代表。值越大，比较精度越高，但计算量也越大；  
 #-i：指示输入数据是核苷酸序列（如果是蛋白质序列则不需要此参数）;  
 #-p 8:使用 8个CPU线程 并行计算;  
 #-:从标准输入读取数据  
@@ -67,10 +67,16 @@ cat refseq.fa |
 
 # split
 mkdir -p job
+#cut -f 1:只截取第一列  
+#split -l 1000：按行数拆分，每1000行为一个文件；-a 3：文件后缀长度为3；-d：以数字作为后缀  
 faops size refseq.fa |
     cut -f 1 |
     split -l 1000 -a 3 -d - job/
 
+#在job目录下查找普通文件，不进入子目录，查找文件名是3个字符，且以数字开头的文件  
+#4线程，每个任务的输出按行实时刷新  
+#echo >&2 "==> {}"：将当前正在处理的任务文件名（如 job/001）输出到标准错误，{}为parallel占位符  
+#对每个文件中的所有序列建立MinHash草图  
 find job -maxdepth 1 -type f -name "[0-9]??" | sort |
     parallel -j 4 --line-buffer '
         echo >&2 "==> {}"
@@ -78,13 +84,18 @@ find job -maxdepth 1 -type f -name "[0-9]??" | sort |
             mash sketch -k 21 -s 1000 -i -p 6 - -o {}.msh
     '
 
+#mash dist：计算两个草图文件之间的Mash距离(越小越相似)  
+#> {}.tsv：将距离计算结果重定向输出到以.tsv 结尾的文件  
 find job -maxdepth 1 -type f -name "[0-9]??" | sort |
     parallel -j 4 --line-buffer '
         echo >&2 "==> {}"
         mash dist -p 6 {}.msh refseq.plasmid.k21s1000.msh > {}.tsv
     '
 
-# distance < 0.01
+# distance < 0.01  
+#--ff-str-ne 1:2：要求第1列和第2列的字符串不相等。这排除了自我比对（即同一个质粒与自身比较，距离为0的行）  
+#--le 3:0.01：要求第3列的数值小于等于0.01。这只保留高度相似的配对（Mash距离 ≤ 0.01 通常意味着ANI > 99%，表明两者几乎是同一质粒的不同版本）  
+#> redundant.tsv：将所有16个并行进程的输出，重定向并追加到同一个redundant.tsv文件中  
 find job -maxdepth 1 -type f -name "[0-9]??" | sort |
     parallel -j 16 '
         cat {}.tsv |
