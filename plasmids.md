@@ -159,3 +159,211 @@ faops some refseq.fa <(cut -f 1 connected_components.tsv) stdout >> refseq.nr.fa
 
 rm -fr job
 ```
+
+# 使用 MinHash 分组  
+```bash
+mkdir ~/data/plasmid/grouping
+cd ~/data/plasmid/grouping
+
+#为refseq.nr.fa构建MinHash草图  
+cat ../nr/refseq.nr.fa |
+    mash sketch -k 21 -s 1000 -i -p 8 - -o refseq.nr.k21s1000.msh
+
+# split  
+#按序列名进行拆分，每1000个拆分成一个文件  
+mkdir -p job
+faops size ../nr/refseq.nr.fa |
+    cut -f 1 |
+    split -l 1000 -a 3 -d - job/
+
+#对每个文件中的所有序列建立MinHash草图  
+find job -maxdepth 1 -type f -name "[0-9]??" | sort |
+    parallel -j 4 --line-buffer '
+        echo >&2 "==> {}"
+        faops some ../nr/refseq.nr.fa {} stdout |
+            mash sketch -k 21 -s 1000 -i -p 6 - -o {}.msh
+    '
+
+#计算两个草图文件之间的Mash距离
+find job -maxdepth 1 -type f -name "[0-9]??" | sort |
+    parallel -j 4 --line-buffer '
+        echo >&2 "==> {}"
+        mash dist -p 6 {}.msh refseq.nr.k21s1000.msh > {}.tsv
+    '
+#将所有{}.tsv的内容整合到一个dist_full.tsv中  
+find job -maxdepth 1 -type f -name "[0-9]??" | sort |
+    parallel -j 1 '
+        cat {}.tsv
+    ' \
+    > dist_full.tsv
+
+# distance < 0.05  
+#将所有mash距离≤0.05的序列写入connected.tsv（排除自我对比）  
+cat dist_full.tsv |
+    tsv-filter --ff-str-ne 1:2 --le 3:0.05 \
+    > connected.tsv
+
+head -n 5 connected.tsv
+#NC_019347.1     NC_000906.2     0.0321972       0       341/1000
+#NC_004847.1     NC_000906.2     0.0458408       0       236/1000
+#NC_002111.1     NC_002130.1     0.0375603       0       294/1000
+#NC_002636.1     NC_006994.1     0.0284057       0       380/1000
+#NC_002524.1     NC_006994.1     0.0444041       0       245/1000
+
+cat connected.tsv | wc -l
+#60618
+
+mkdir -p group
+cat connected.tsv |
+    perl -nla -F"\t" -MGraph::Undirected -MPath::Tiny -e '
+        BEGIN {
+            our $g = Graph::Undirected->new;
+        }
+
+        $g->add_edge($F[0], $F[1]);
+
+        END {
+            my @rare;
+            my $serial = 1;
+            my @ccs = $g->connected_components;
+            @ccs = map { $_->[0] }
+                sort { $b->[1] <=> $a->[1] }
+                map { [ $_, scalar( @{$_} ) ] } @ccs;
+            for my $cc ( @ccs ) {
+                my $count = scalar @{$cc};
+                if ($count < 50) {
+                    push @rare, @{$cc};
+                }
+                else {
+                    path(qq{group/$serial.lst})->spew(map {qq{$_\n}} @{$cc});
+                    $serial++;
+                }
+            }
+            path(qq{group/00.lst})->spew(map {qq{$_\n}} @rare);
+
+            path(qq{grouped.lst})->spew(map {qq{$_\n}} $g->vertices);
+        }
+    '
+
+# get non-grouped
+# this will no be divided to subgroups
+faops some -i ../nr/refseq.nr.fa grouped.lst stdout |
+    faops size stdin |
+    cut -f 1 \
+    > group/lonely.lst
+
+wc -l group/*
+#  3333 group/00.lst
+#  1644 group/1.lst
+#   359 group/2.lst
+#    94 group/3.lst
+#    69 group/4.lst
+#    65 group/5.lst
+#    55 group/6.lst
+#    51 group/7.lst
+#    51 group/8.lst
+#  6477 group/lonely.lst
+# 12198 total
+
+find group -maxdepth 1 -type f -name "[0-9]*.lst" | sort |
+    parallel -j 4 --line-buffer '
+        echo >&2 "==> {}"
+
+        faops some ../nr/refseq.nr.fa {} stdout |
+            mash sketch -k 21 -s 1000 -i -p 6 - -o {}.msh
+
+        mash dist -p 6 {}.msh {}.msh > {}.tsv
+    '
+
+find group -maxdepth 1 -type f -name "[0-9]*.lst.tsv" | sort |
+    parallel -j 4 --line-buffer '
+        echo >&2 "==> {}"
+
+        cat {} |
+            tsv-select -f 1-3 |
+            Rscript -e '\''
+                library(readr);
+                library(tidyr);
+                library(ape);
+                pair_dist <- read_tsv(file("stdin"), col_names=F);
+                tmp <- pair_dist %>%
+                    pivot_wider( names_from = X2, values_from = X3, values_fill = list(X3 = 1.0) )
+                tmp <- as.matrix(tmp)
+                mat <- tmp[,-1]
+                rownames(mat) <- tmp[,1]
+
+                dist_mat <- as.dist(mat)
+                clusters <- hclust(dist_mat, method = "ward.D2")
+                tree <- as.phylo(clusters)
+                write.tree(phy=tree, file="{.}.tree.nwk")
+
+                group <- cutree(clusters, h=0.2) # k=3
+                groups <- as.data.frame(group)
+                groups$ids <- rownames(groups)
+                rownames(groups) <- NULL
+                groups <- groups[order(groups$group), ]
+                write_tsv(groups, "{.}.groups.tsv")
+            '\''
+    '
+
+# subgroup
+mkdir -p subgroup
+cp group/lonely.lst subgroup/
+
+find group -name "*.groups.tsv" | sort |
+    parallel -j 1 -k '
+        cat {} | sed -e "1d" | xargs -I[] echo "{/.}_[]"
+    ' |
+    sed -e 's/.lst.groups_/_/' |
+    perl -na -F"\t" -MPath::Tiny -e '
+        path(qq{subgroup/$F[0].lst})->append(qq{$F[1]});
+    '
+
+# ignore small subgroups
+find subgroup -name "*.lst" | sort |
+    parallel -j 1 -k '
+        lines=$(cat {} | wc -l)
+
+        if (( lines < 5 )); then
+            echo -e "{}\t$lines"
+            cat {} >> subgroup/lonely.lst
+            rm {}
+        fi
+    '
+
+# append ccs
+cat ../nr/connected_components.tsv |
+    parallel -j 1 --colsep "\t" '
+        file=$(rg -F -l  "{1}" subgroup)
+        echo {} | tr "[:blank:]" "\n" >> ${file}
+    '
+
+# remove duplicates
+find subgroup -name "*.lst" | sort |
+    parallel -j 1 '
+        cat {} | sort | uniq > tmp.lst
+        mv tmp.lst {}
+    '
+
+wc -l subgroup/* |
+    sort -nr |
+    head -n 100
+
+wc -l subgroup/* |
+    perl -pe 's/^\s+//' |
+    tsv-filter -d" " --le 1:10 |
+    wc -l
+
+
+wc -l subgroup/* |
+    perl -pe 's/^\s+//' |
+    tsv-filter -d" " --ge 1:50 |
+    tsv-filter -d " " --regex '2:\d+' |
+    sort -nr \
+    > next.tsv
+
+wc -l next.tsv
+#53
+
+# rm -fr job
+```
