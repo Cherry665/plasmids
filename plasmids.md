@@ -103,16 +103,29 @@ find job -maxdepth 1 -type f -name "[0-9]??" | sort |
     ' \
     > redundant.tsv
 
+#生成的{}.tsv文件占用windowsC盘较大空间，可以删除job目录后用powershell执行以下操作清理内存  
+# 1. 关闭WSL  
+wsl --shutdown
+# 2. 启动diskpart  
+diskpart
+# 3. 执行压缩  
+select vdisk file="C:\Users\Cherry\AppData\Local\WSL\{3db288f3-86ad-4e0a-b3f5-81d862dc80bf}\ext4.vhdx"
+attach vdisk readonly
+compact vdisk
+detach vdisk
+exit
+
 head -n 5 redundant.tsv
-#NZ_CP034776.1   NC_005249.1     0.000730741     0       970/1000
-#NZ_CP034416.1   NC_005249.1     0.00580821      0       794/1000
-#NZ_LR745046.1   NC_005249.1     0.0010072       0       959/1000
-#NZ_LR745043.1   NC_005249.1     0.000656154     0       973/1000
-#NZ_CP033694.1   NC_006323.1     0.00766986      0       741/1000
+#NZ_JAMYCY010000061.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
+#NZ_JAMYCX010000066.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
+#NZ_JAMYCU010000065.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
+#NZ_JAMYCV010000066.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
+#NZ_JAMYCZ010000078.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
 
 cat redundant.tsv | wc -l
-# 129384
+# 4637040
 
+#识别表中互相连通的序列（相似度高的序列），构建无向图  
 cat redundant.tsv |
     perl -nla -F"\t" -MGraph::Undirected -e '
         BEGIN {
@@ -129,17 +142,20 @@ cat redundant.tsv |
     ' \
     > connected_components.tsv
 
+#将connected_components.tsv中所有序列ID都列在一列  
 cat connected_components.tsv |
     perl -nla -F"\t" -e 'printf qq{%s\n}, $_ for @F' \
     > components.list
 
 wc -l connected_components.tsv components.list
-#  2073 connected_components.tsv
-#  9800 components.list
+# 9038 connected_components.tsv
+# 65878 components.list
 
+#先提取所有独立的序列  
+#在提取所有组中的代表序列(每组第一个)  
+#使refseq.nr.fa中没有冗余序列  
 faops some -i refseq.fa components.list stdout > refseq.nr.fa
 faops some refseq.fa <(cut -f 1 connected_components.tsv) stdout >> refseq.nr.fa
 
 rm -fr job
-
 ```
