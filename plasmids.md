@@ -284,6 +284,7 @@ find group -maxdepth 1 -type f -name "[0-9]*.lst" | sort |
         mash dist -p 6 {}.msh {}.msh > {}.tsv
     '
 
+#对每个 Mash 距离矩阵文件进行层次聚类分析，生成系统发育树和分组结果
 find group -maxdepth 1 -type f -name "[0-9]*.lst.tsv" | sort |
     parallel -j 4 --line-buffer '
         echo >&2 "==> {}"
@@ -296,39 +297,47 @@ find group -maxdepth 1 -type f -name "[0-9]*.lst.tsv" | sort |
                 library(ape);
                 pair_dist <- read_tsv(file("stdin"), col_names=F);
                 tmp <- pair_dist %>%
-                    pivot_wider( names_from = X2, values_from = X3, values_fill = list(X3 = 1.0) )
+                    pivot_wider( names_from = X2, values_from = X3, values_fill = list(X3 = 1.0) )                  #将长格式转换为宽格式
                 tmp <- as.matrix(tmp)
                 mat <- tmp[,-1]
                 rownames(mat) <- tmp[,1]
 
                 dist_mat <- as.dist(mat)
-                clusters <- hclust(dist_mat, method = "ward.D2")
-                tree <- as.phylo(clusters)
-                write.tree(phy=tree, file="{.}.tree.nwk")
+                clusters <- hclust(dist_mat, method = "ward.D2")     #利用Ward's D2方法将距离矩阵转换为层次聚类树
+                tree <- as.phylo(clusters)                           #将聚类树转换为系统发育树格式
+                write.tree(phy=tree, file="{.}.tree.nwk")            #保存系统发育树
 
-                group <- cutree(clusters, h=0.2) # k=3
+                group <- cutree(clusters, h=0.2) # k=3               #在高度0.2处切割
                 groups <- as.data.frame(group)
-                groups$ids <- rownames(groups)
+                groups$ids <- rownames(groups)                       #添加序列ID列
                 rownames(groups) <- NULL
-                groups <- groups[order(groups$group), ]
+                groups <- groups[order(groups$group), ]              #按组排序
                 write_tsv(groups, "{.}.groups.tsv")
             '\''
     '
 
 # subgroup
 mkdir -p subgroup
+#复制文件  
 cp group/lonely.lst subgroup/
 
+#-k：保持输出顺序与输入一致  
+#sed -e "1d":删除文件中的第1行（d表示删除）  
+#xargs -I[]：将每一行输入作为整体赋值给 []，而不是按空格分割  
+#{/.}：移除文件路径和后缀（/去路径，.去后缀）  
+#-n：循环读取输入；-a:自动分割字段;-F"\t":以制表符分割字段  
+#perl中，path()：创建文件路径对象；->append()：向文件追加内容；qq{}：引用操作符  
 find group -name "*.groups.tsv" | sort |
     parallel -j 1 -k '
-        cat {} | sed -e "1d" | xargs -I[] echo "{/.}_[]"
+        cat {} | sed -e "1d" | xargs -I[] echo "{/.}_[]"            #输出类似于13.lst.groups_1	NZ_WSSZ01000018.1
     ' |
-    sed -e 's/.lst.groups_/_/' |
+    sed -e 's/.lst.groups_/_/' |                                    #输出类似于13_1	NZ_WSSZ01000018.1
     perl -na -F"\t" -MPath::Tiny -e '
-        path(qq{subgroup/$F[0].lst})->append(qq{$F[1]});
+        path(qq{subgroup/$F[0].lst})->append(qq{$F[1]});            #输出一个文件名为13_1.lst的文件，内容为WSSZ01000018.1
     '
 
-# ignore small subgroups
+# ignore small subgroups  
+#将*.lst文件中行数小于5的序列名内容写入subgroup/lonely.lst，删除文件  
 find subgroup -name "*.lst" | sort |
     parallel -j 1 -k '
         lines=$(cat {} | wc -l)
@@ -340,7 +349,11 @@ find subgroup -name "*.lst" | sort |
         fi
     '
 
-# append ccs
+# append ccs  
+#对于连通分量中的第一个序列，找到它所属的分组文件，并将整个连通分量的所有序列追加到该文件中（每行一个序列）  
+#--colsep "\t"：按制表符分割列  
+#rg -F -l "{1}" subgroup：在subgroup目录中搜索包含{1}（第一列）的文件；-F：固定字符串匹配；-l：只输出文件名  
+#tr "[:blank:]" "\n"：将所有空白字符（空格、制表符）替换为换行符  
 cat ../nr/connected_components.tsv |
     parallel -j 1 --colsep "\t" '
         file=$(rg -F -l  "{1}" subgroup)
@@ -348,31 +361,92 @@ cat ../nr/connected_components.tsv |
     '
 
 # remove duplicates
+#去除每个文件中重复的序列  
+#先用sort将序列ID按字母顺序排列，再用uniq去除连续的重复行  
 find subgroup -name "*.lst" | sort |
     parallel -j 1 '
         cat {} | sort | uniq > tmp.lst
         mv tmp.lst {}
     '
 
+#计算subgroup中每个文件的行数，按数值反向排序（-n：按数值排序；-r：反转顺序，从大到小），输出前100个  
 wc -l subgroup/* |
     sort -nr |
     head -n 100
 
+#统计有多少个文件包含≤10个序列  
+#perl -pe 's/^\s+//'：去除行首的空白字符（\s表示空白字符，+表示一个或多个）  
+#tsv-filter -d" " --le 1:10：只保留行数≤10的行（-d" "：以空格作为分隔符；）
 wc -l subgroup/* |
     perl -pe 's/^\s+//' |
     tsv-filter -d" " --le 1:10 |
     wc -l
 
-
+#将subgroup中行数序列数≥50，且文件名中包含数字的文件按序列数从大到小输入到next.tsv中  
+#tsv-filter -d" " --regex 2:\\d+:筛选第2列包含一个或多个数字的行(--regex：正则表达式匹配；\d表示十进制数字0-9（前面的\是转义符）；+表示一个或多个)
 wc -l subgroup/* |
     perl -pe 's/^\s+//' |
     tsv-filter -d" " --ge 1:50 |
-    tsv-filter -d " " --regex '2:\d+' |
+    tsv-filter -d" " --regex 2:\\d+ |
     sort -nr \
     > next.tsv
 
 wc -l next.tsv
-#53
+#262
 
 # rm -fr job
+```
+
+# 质粒准备  
+## 拆分序列  
+```bash
+mkdir ~/data/plasmid/GENOMES
+mkdir ~/data/plasmid/taxon
+
+cd ~/data/plasmid/grouping
+
+echo -e "#Serial\tGroup\tCount\tTarget" > ../taxon/group_target.tsv
+
+cat next.tsv |
+    cut -d" " -f 2 |
+    parallel -j 4 -k --line-buffer '
+        echo >&2 "==> {}"
+
+        GROUP_NAME={/.}
+        TARGET_NAME=$(head -n 1 {} | perl -pe "s/\.\d+//g")
+
+        SERIAL={#}
+        COUNT=$(cat {} | wc -l)
+
+        echo -e "${SERIAL}\t${GROUP_NAME}\t${COUNT}\t${TARGET_NAME}" >> ../taxon/group_target.tsv
+
+        faops order ../nr/refseq.fa {} stdout |
+            faops filter -s stdin stdout \
+            > ../GENOMES/${GROUP_NAME}.fa
+    '
+
+cat next.tsv |
+    cut -d" " -f 2 |
+    parallel -j 4 -k --line-buffer '
+        echo >&2 "==> {}"
+        GROUP_NAME={/.}
+        faops size ../GENOMES/${GROUP_NAME}.fa > ../taxon/${GROUP_NAME}.sizes
+    '
+
+# Optional: RepeatMasker
+#egaz repeatmasker -p 16 ../GENOMES/*.fa -o ../GENOMES/
+
+# split-name
+find ../GENOMES -maxdepth 1 -type f -name "*.fa" | sort |
+    parallel -j 4 '
+        faops split-name {} {.}
+    '
+
+# mv to dir of basename
+find ../GENOMES -maxdepth 2 -mindepth 2 -type f -name "*.fa" | sort |
+    parallel -j 4 '
+        mkdir -p {.}
+        mv {} {.}
+    '
+
 ```
