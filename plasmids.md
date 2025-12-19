@@ -103,7 +103,7 @@ find job -maxdepth 1 -type f -name "[0-9]??" | sort |
     ' \
     > redundant.tsv
 
-#生成的{}.tsv文件占用windowsC盘较大空间，可以删除job目录后用powershell执行以下操作清理内存  
+#生成的{}.tsv文件占用windowsC盘较大空间，可以删除job目录后以管理员身份用powershell执行以下操作清理内存  
 # 1. 关闭WSL  
 wsl --shutdown
 # 2. 启动diskpart  
@@ -204,16 +204,19 @@ cat dist_full.tsv |
     > connected.tsv
 
 head -n 5 connected.tsv
-#NC_019347.1     NC_000906.2     0.0321972       0       341/1000
-#NC_004847.1     NC_000906.2     0.0458408       0       236/1000
-#NC_002111.1     NC_002130.1     0.0375603       0       294/1000
-#NC_002636.1     NC_006994.1     0.0284057       0       380/1000
-#NC_002524.1     NC_006994.1     0.0444041       0       245/1000
+#NZ_JBIPKM010000004.1    NZ_JBIPKM010000002.1    0.0331502       0       332/1000
+#NZ_JBHFKA010000002.1    NZ_JBIPKM010000003.1    0.0310744       0       352/1000
+#NZ_JAIZPO010000102.1    NZ_JBIPKM010000003.1    0.0447178       0       243/1000
+#NZ_JBIPKM010000002.1    NZ_JBIPKM010000004.1    0.0331502       0       332/1000
+#NZ_JAODAJ010000036.1    NZ_JBIPKM010000005.1    0.0448759       0       242/1000
 
 cat connected.tsv | wc -l
-#60618
+#649586
 
 mkdir -p group
+#系统中有两个perl环境，执行前先设置环境变量  
+PERL5LIB=/home/cherry/miniconda3/lib/perl5
+#将序列ID作为节点，在它们之间添加边，使用 $g->connected_components 找出所有连通分量（即序列之间具有相似性），按连通分量的大小（序列数量）从大到小排序，大分量（节点数 ≥ 50）每个分量保存到单独文件，小分量（节点数 < 50）所有小分量节点（序列ID）合并到 group/00.lst。生成 grouped.lst 包含图中所有节点  
 cat connected.tsv |
     perl -nla -F"\t" -MGraph::Undirected -MPath::Tiny -e '
         BEGIN {
@@ -245,26 +248,32 @@ cat connected.tsv |
         }
     '
 
-# get non-grouped
-# this will no be divided to subgroups
+# 得到未被分组的序列  
 faops some -i ../nr/refseq.nr.fa grouped.lst stdout |
     faops size stdin |
     cut -f 1 \
     > group/lonely.lst
 
 wc -l group/*
-#  3333 group/00.lst
-#  1644 group/1.lst
-#   359 group/2.lst
-#    94 group/3.lst
-#    69 group/4.lst
-#    65 group/5.lst
-#    55 group/6.lst
-#    51 group/7.lst
-#    51 group/8.lst
-#  6477 group/lonely.lst
-# 12198 total
+#10623 group/00.lst
+#13494 group/1.lst
+#   65 group/10.lst
+#   64 group/11.lst
+#   55 group/12.lst
+#   53 group/13.lst
+#  654 group/2.lst
+#  293 group/3.lst
+#  173 group/4.lst
+#  163 group/5.lst
+#   79 group/6.lst
+#   70 group/7.lst
+#   70 group/8.lst
+#   68 group/9.lst
+#17991 group/lonely.lst
+#43915 total
 
+#对每个 .lst 文件中的序列进行 Mash 草图（sketch）构建，并计算序列间的 Mash 距离（{}.msh文件与自身比较）  
+#--line-buffer：立即输出每一行结果，避免缓冲  
 find group -maxdepth 1 -type f -name "[0-9]*.lst" | sort |
     parallel -j 4 --line-buffer '
         echo >&2 "==> {}"
