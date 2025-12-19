@@ -407,24 +407,26 @@ cd ~/data/plasmid/grouping
 
 echo -e "#Serial\tGroup\tCount\tTarget" > ../taxon/group_target.tsv
 
+#从分组文件中提取序列，生成对应的基因组FASTA文件，并记录分组信息  
 cat next.tsv |
-    cut -d" " -f 2 |
+    cut -d" " -f 2 |                      #截取第二列内容，如subgroup/1_2.lst
     parallel -j 4 -k --line-buffer '
         echo >&2 "==> {}"
 
-        GROUP_NAME={/.}
-        TARGET_NAME=$(head -n 1 {} | perl -pe "s/\.\d+//g")
+        GROUP_NAME={/.}                   #去除路径及后缀名，如1_2
+        TARGET_NAME=$(head -n 1 {} | perl -pe "s/\.\d+//g")        #读取文件第一行，删除所有 .数字 后缀（g：全局替换），如NC_002122.1→NC_002122
 
-        SERIAL={#}
+        SERIAL={#}                           #{#}：GNU Parallel任务序号（1,2,3...）
         COUNT=$(cat {} | wc -l)
 
         echo -e "${SERIAL}\t${GROUP_NAME}\t${COUNT}\t${TARGET_NAME}" >> ../taxon/group_target.tsv
 
-        faops order ../nr/refseq.fa {} stdout |
+        faops order ../nr/refseq.fa {} stdout |             #从fasta文件中提取指定序列并简化描述行
             faops filter -s stdin stdout \
             > ../GENOMES/${GROUP_NAME}.fa
     '
 
+#计算序列长度  
 cat next.tsv |
     cut -d" " -f 2 |
     parallel -j 4 -k --line-buffer '
@@ -433,16 +435,19 @@ cat next.tsv |
         faops size ../GENOMES/${GROUP_NAME}.fa > ../taxon/${GROUP_NAME}.sizes
     '
 
-# Optional: RepeatMasker
+# Optional: RepeatMasker  
+#识别并屏蔽重复序列  
 #egaz repeatmasker -p 16 ../GENOMES/*.fa -o ../GENOMES/
 
-# split-name
+# split-name  
+#将每一个序列文件按序列名拆分成多个fasta文件，保存在一个目录里（如：1_2.fa中的序列会逐个拆分成多个.fa文件，保存在1_2目录中）
 find ../GENOMES -maxdepth 1 -type f -name "*.fa" | sort |
     parallel -j 4 '
         faops split-name {} {.}
     '
 
-# mv to dir of basename
+# mv to dir of basename  
+#为拆分后的.fa文件再构建一个以其序列名命名的子目录，将.fa文件移动到子目录中  
 find ../GENOMES -maxdepth 2 -mindepth 2 -type f -name "*.fa" | sort |
     parallel -j 4 '
         mkdir -p {.}
