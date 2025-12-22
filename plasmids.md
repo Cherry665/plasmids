@@ -455,3 +455,23 @@ find ../GENOMES -maxdepth 2 -mindepth 2 -type f -name "*.fa" | sort |
     '
 
 ```
+
+## 准备序列  
+```bash
+cd ~/data/plasmid/
+# 利用 egaz prepseq 将原始基因组序列文件转换为标准化、索引化的格式，包括：  
+# .2bit文件为FASTA文件的压缩文件  
+# .size文件为记录序列名称和长度的文件  
+# .fasta.fai为序列的索引文件  
+# chr.fasta为标准化的序列文件  
+cat taxon/group_target.tsv |
+    sed -e '1d' |                           # 删除第一行  
+    parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 4 '      # --colsep '\t'：指定列分隔符为制表符，每行会被自动分割成多个字段  
+        echo -e "==> Group: [{2}]\tTarget: [{4}]\n"              # {2}{4}分别代表第2列和第4列的内容  
+
+        for name in $(cat taxon/{2}.sizes | cut -f 1); do
+            egaz prepseq GENOMES/{2}/${name}
+        done
+    '
+
+```
