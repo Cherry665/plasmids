@@ -475,3 +475,88 @@ cat taxon/group_target.tsv |
     '
 
 ```
+
+## 检查长度的异常值  
+```bash
+cd ~/data/plasmid/
+
+cat taxon/*.sizes | cut -f 1 | wc -l
+#43444
+
+#计算所有.sizes结尾文件中，所有序列的总碱基数  
+#paste：-s：将多行合并为一行，-d+：用+作为分隔符  
+#bc：执行数学计算  
+cat taxon/*.sizes | cut -f 2 | paste -sd+ | bc
+#4040717759
+
+cat taxon/group_target.tsv |
+    sed -e '1d' |
+    parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 4 '
+        echo -e "==> Group: [{2}]\tTarget: [{4}]"
+
+        median=$(cat taxon/{2}.sizes | datamash median 2)           #（自动提取第2列）计算所有序列长度的中位数（median)
+        mad=$(cat taxon/{2}.sizes | datamash mad 2)               #计算中位数绝对偏差（MAD），MAD = median(|每个值 - 中位数|)
+        lower_limit=$( bc <<< " (${median} - 2 * ${mad}) / 2" )   #利用bc计算最小阈值，"<<<"将计算结果（字符串）作为标准输入传递给命令
+
+#        echo $median $mad $lower_limit
+        lines=$(tsv-filter taxon/{2}.sizes --le "2:${lower_limit}" | wc -l)     #过滤出≤最小阈值的序列，计算行数
+
+        if (( lines > 0 )); then
+            echo >&2 "    $lines lines to be filtered"
+            tsv-join taxon/{2}.sizes -e -f <(                         #-e：排除模式;-f <(...)：从进程替换读取要排除的列表  
+                    tsv-filter taxon/{2}.sizes --le "2:${lower_limit}"
+                ) \
+                > taxon/{2}.filtered.sizes
+            mv taxon/{2}.filtered.sizes taxon/{2}.sizes
+        fi
+    '
+
+cat taxon/*.sizes | cut -f 1 | wc -l
+#4780
+
+cat taxon/*.sizes | cut -f 2 | paste -sd+ | bc
+#464908146
+```
+
+## Rsync到hpcc  
+```bash
+rsync -avP \
+    ~/data/plasmid/ \
+    wangq@202.119.37.251:data/plasmid
+
+# rsync -avP wangq@202.119.37.251:data/plasmid/ ~/data/plasmid
+```
+
+# 质粒执行  
+```bash
+cd ~/data/plasmid/
+
+cat taxon/group_target.tsv |
+    sed -e '1d' | grep "^53" |
+    parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 1 '
+        echo -e "==> Group: [{2}]\tTarget: [{4}]\n"
+
+        egaz template \
+            GENOMES/{2}/{4} \
+            $(cat taxon/{2}.sizes | cut -f 1 | grep -v -x "{4}" | xargs -I[] echo "GENOMES/{2}/[]") \
+            --multi -o groups/{2}/ \
+            --order \
+            --parallel 24 -v
+
+#        bash groups/{2}/1_pair.sh
+#        bash groups/{2}/3_multi.sh
+
+        bsub -q mpi -n 24 -J "{2}-1_pair" "bash groups/{2}/1_pair.sh"
+        bsub -w "ended({2}-1_pair)" \
+            -q mpi -n 24 -J "{2}-3_multi" "bash groups/{2}/3_multi.sh"
+    '
+
+# clean
+find groups -mindepth 1 -maxdepth 3 -type d -name "*_raw" | parallel -r rm -fr
+find groups -mindepth 1 -maxdepth 3 -type d -name "*_fasta" | parallel -r rm -fr
+find . -mindepth 1 -maxdepth 3 -type f -name "output.*" | parallel -r rm
+
+echo \
+    $(find groups -mindepth 1 -maxdepth 1 -type d | wc -l) \
+    $(find groups -mindepth 1 -maxdepth 3 -type f -name "*.nwk.pdf" | wc -l)
+```
