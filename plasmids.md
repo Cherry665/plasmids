@@ -3,7 +3,8 @@
 ```bash
 mkdir -p ~/data/plasmid
 cd ~/data/plasmid
-# 利用 rsync 远程数据同步工具从NCBI RefSeq下载数据  
+# 利用 rsync 远程数据同步工具从NCBI RefSeq下载数据
+#-a：保持所有文件属性；-v：显示同步过程中的文件信息；-P：显示传输进度，支持断点续传    
 rsync -avP ftp.ncbi.nlm.nih.gov::refseq/release/plasmid/ RefSeq/
 
 # 解压并全部输入genomic.gbff  
@@ -527,6 +528,7 @@ cat taxon/*.sizes | cut -f 2 | paste -sd+ | bc
 
 ## Rsync到hpcc  
 ```bash
+#将本地目录及内容同步到远程服务器  
 rsync -avP \
     ~/data/plasmid/ \
     wangq@202.119.37.251:data/plasmid
@@ -539,7 +541,7 @@ rsync -avP \
 cd ~/data/plasmid/
 
 cat taxon/group_target.tsv |
-    sed -e '1d' | grep "^53" |
+    sed -e '1d' | grep "^53" |              #只选了第53行的执行
     parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 1 '
         echo -e "==> Group: [{2}]\tTarget: [{4}]\n"
 
