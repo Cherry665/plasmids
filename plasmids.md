@@ -459,7 +459,7 @@ find ../GENOMES -maxdepth 2 -mindepth 2 -type f -name "*.fa" | sort |
 ## 准备序列  
 ```bash
 cd ~/data/plasmid/
-# 利用 egaz prepseq 将原始基因组序列文件转换为标准化、索引化的格式，包括：  
+# (不要在conda环境中)利用 egaz prepseq 将原始基因组序列文件转换为标准化、索引化的格式，包括：  
 # .2bit文件为FASTA文件的压缩文件  
 # .size文件为记录序列名称和长度的文件  
 # .fasta.fai为序列的索引文件  
@@ -473,7 +473,12 @@ cat taxon/group_target.tsv |
             egaz prepseq GENOMES/{2}/${name}
         done
     '
-
+#退出conda环境  
+#conda deactivate  
+#激活conda环境  
+#conda activate  
+#禁止conda环境自动启动  
+#conda config --set auto_activate_base false  
 ```
 
 ## 检查长度的异常值  
@@ -489,6 +494,8 @@ cat taxon/*.sizes | cut -f 1 | wc -l
 cat taxon/*.sizes | cut -f 2 | paste -sd+ | bc
 #4040717759
 
+#过滤异常小的序列  
+#（tsv-filter工具在conda环境中）  
 cat taxon/group_target.tsv |
     sed -e '1d' |
     parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 4 '
@@ -512,10 +519,10 @@ cat taxon/group_target.tsv |
     '
 
 cat taxon/*.sizes | cut -f 1 | wc -l
-#4780
+#43011
 
 cat taxon/*.sizes | cut -f 2 | paste -sd+ | bc
-#464908146
+#4028399698
 ```
 
 ## Rsync到hpcc  
