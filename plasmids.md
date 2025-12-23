@@ -545,22 +545,27 @@ cat taxon/group_target.tsv |
     parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 1 '
         echo -e "==> Group: [{2}]\tTarget: [{4}]\n"
 
+#grep -v -x "{4}":排除{4}指代的序列；-v：显示不匹配的行；-x：整行完全匹配  
+#xargs -I[]：建立替换标记，将每一行输入读取后，替换到输入的"GENOMES/{2}/[]"中的[]位置  
+#--multi：生成多重比对流程；-o groups/{2}/：生成groups目录并输出到此目录中；--order：保持染色体顺序；--parallel 24 -v：使用24线程，详细输出  
         egaz template \
-            GENOMES/{2}/{4} \
-            $(cat taxon/{2}.sizes | cut -f 1 | grep -v -x "{4}" | xargs -I[] echo "GENOMES/{2}/[]") \
+            GENOMES/{2}/{4} \         #参考基因组
+            $(cat taxon/{2}.sizes | cut -f 1 | grep -v -x "{4}" | xargs -I[] echo "GENOMES/{2}/[]") \       #其他基因组
             --multi -o groups/{2}/ \
             --order \
             --parallel 24 -v
 
-#        bash groups/{2}/1_pair.sh
-#        bash groups/{2}/3_multi.sh
-
-        bsub -q mpi -n 24 -J "{2}-1_pair" "bash groups/{2}/1_pair.sh"
-        bsub -w "ended({2}-1_pair)" \
+#输出1_pair.sh为两两基因组比对结果，3_multi.sh为多重比对整合结果    
+bash groups/{2}/1_pair.sh
+bash groups/{2}/3_multi.sh
+#-w " "为作业依赖条件，需要{2}-1_pair完成；-q mpi：队列名称（MPI并行队列）；-n:CPU核心数；-J：要执行的作业名称；"bash..."：要执行的命令  
+#        bsub -q mpi -n 24 -J "{2}-1_pair" "bash groups/{2}/1_pair.sh"
+#        bsub -w "ended({2}-1_pair)" \
             -q mpi -n 24 -J "{2}-3_multi" "bash groups/{2}/3_multi.sh"
     '
 
-# clean
+# clean删除中间文件  
+#parallel -r：如果输入为空则不执行  
 find groups -mindepth 1 -maxdepth 3 -type d -name "*_raw" | parallel -r rm -fr
 find groups -mindepth 1 -maxdepth 3 -type d -name "*_fasta" | parallel -r rm -fr
 find . -mindepth 1 -maxdepth 3 -type f -name "output.*" | parallel -r rm
