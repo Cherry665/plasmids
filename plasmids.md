@@ -539,7 +539,7 @@ rsync -avP \
 # 质粒执行  
 ```bash
 cd ~/data/plasmid/
-
+#在conda环境下  
 cat taxon/group_target.tsv |
     sed -e '1d' | grep "^53" |              #只选了第53行的执行
     parallel --colsep '\t' --no-run-if-empty --linebuffer -k -j 1 '
