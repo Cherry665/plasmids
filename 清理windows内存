@@ -1,0 +1,12 @@
+```powershell
+# 1. 关闭WSL  
+wsl --shutdown
+# 2. 启动diskpart  
+diskpart
+# 3. 执行压缩  
+select vdisk file="C:\Users\Cherry\AppData\Local\WSL\{3db288f3-86ad-4e0a-b3f5-81d862dc80bf}\ext4.vhdx"
+attach vdisk readonly
+compact vdisk
+detach vdisk
+exit
+```
