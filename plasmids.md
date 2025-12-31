@@ -106,15 +106,15 @@ find job -maxdepth 1 -type f -name "[0-9]??" | sort |
 
 #生成的{}.tsv文件占用windowsC盘较大空间，可以删除job目录后以管理员身份用powershell执行以下操作清理内存  
 # 1. 关闭WSL  
-wsl --shutdown
+#wsl --shutdown
 # 2. 启动diskpart  
-diskpart
+#diskpart
 # 3. 执行压缩  
-select vdisk file="C:\Users\Cherry\AppData\Local\WSL\{3db288f3-86ad-4e0a-b3f5-81d862dc80bf}\ext4.vhdx"
-attach vdisk readonly
-compact vdisk
-detach vdisk
-exit
+#select vdisk file="C:\Users\Cherry\AppData\Local\WSL\{3db288f3-86ad-4e0a-b3f5-81d862dc80bf}\ext4.vhdx"
+#attach vdisk readonly
+#compact vdisk
+#detach vdisk
+#exit
 
 head -n 5 redundant.tsv
 #NZ_JAMYCY010000061.1    NZ_JBIPKM010000008.1    0.0081558       0       728/1000
